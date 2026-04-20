@@ -1,251 +1,335 @@
-import urllib.request
-import urllib.parse
-import json
-import time
 import random
+import asyncio
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.filters import Command, StateFilter
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 
-# ========== ТОКЕН (ЗАМЕНИ НА СВОЙ) ==========
-BOT_TOKEN = "8655886367:AAGQMnYq2OEGI50vn2Z1TWe1P--zp-zydr0"
+# ========== КОНФИГ ==========
+BOT_TOKEN = "8655886367:AAGQMnYq2OEGI50vn2Z1TWe1P--zp-zydr0"  # ВСТАВЬ СВОЙ ТОКЕН
 
-# ========== TELEGRAM API через urllib ==========
-def api_call(method, params):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
-    data = json.dumps(params).encode('utf-8')
-    req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read().decode('utf-8'))
-    except Exception as e:
-        print(f"Ошибка: {e}")
-        return None
-
-def send_msg(chat_id, text, reply_markup=None, parse_mode=None):
-    p = {"chat_id": chat_id, "text": text}
-    if parse_mode:
-        p["parse_mode"] = parse_mode
-    if reply_markup:
-        p["reply_markup"] = reply_markup
-    return api_call("sendMessage", p)
-
-def send_cb(cb_id, text=None, alert=False):
-    p = {"callback_query_id": cb_id}
-    if text:
-        p["text"] = text
-        p["show_alert"] = alert
-    return api_call("answerCallbackQuery", p)
-
-def edit_msg(chat_id, msg_id, text, reply_markup=None):
-    p = {"chat_id": chat_id, "message_id": msg_id, "text": text}
-    if reply_markup:
-        p["reply_markup"] = reply_markup
-    return api_call("editMessageText", p)
-
-def del_msg(chat_id, msg_id):
-    return api_call("deleteMessage", {"chat_id": chat_id, "message_id": msg_id})
-
-# ========== КЛАВИАТУРЫ (как на фото) ==========
-def main_kb():
-    return {"keyboard": [[{"text": "🚕 Работа / задания"}], [{"text": "👤 Профиль"}], [{"text": "🔄 Сбросить персонажа"}]], "resize_keyboard": True}
-
-def skin_kb():
-    return {"inline_keyboard": [[{"text": "светлый", "callback_data": "skin_light"}], [{"text": "тёмный", "callback_data": "skin_dark"}], [{"text": "я не мужик 😂", "callback_data": "skin_uni"}]]}
-
-def hair_kb():
-    return {"inline_keyboard": [[{"text": "Классика", "callback_data": "h1"}, {"text": "Андеркат", "callback_data": "h2"}], [{"text": "Дреды", "callback_data": "h3"}, {"text": "Лысый", "callback_data": "h4"}], [{"text": "ничего не нравится", "callback_data": "h5"}]]}
-
-def car_kb():
-    return {"inline_keyboard": [[{"text": "TAX2", "callback_data": "car_wrong"}, {"text": "TAX5", "callback_data": "car_wrong"}, {"text": "TAX3", "callback_data": "car_correct"}], [{"text": "TAX4", "callback_data": "car_wrong"}, {"text": "TAX9", "callback_data": "car_wrong"}, {"text": "TAX1", "callback_data": "car_wrong"}], [{"text": "◀ Назад", "callback_data": "back_work"}]]}
-
-def trip_kb():
-    return {"inline_keyboard": [[{"text": "✅ обновить время / высадить", "callback_data": "finish_trip"}]]}
+bot = Bot(token=BOT_TOKEN)
+storage = MemoryStorage()
+dp = Dispatcher(storage=storage)
 
 # ========== ДАННЫЕ ПОЛЬЗОВАТЕЛЕЙ ==========
-users = {}      # user_id -> {name, skin, hair, money, trips, task_done}
-reg_data = {}   # user_id -> {step, skin, hair}
-active_trips = {}  # user_id -> {passenger, end_time, msg_id, chat_id}
+user_data = {}  # {user_id: {"nick": "Fffffsd", "balance": 50000, "trips_done": 0, "reg_complete": False}}
 
-# ========== КОМАНДЫ И СООБЩЕНИЯ (ТОЧНО КАК НА ФОТО) ==========
-def cmd_start(chat_id, user_id):
-    if user_id in users and users[user_id].get("in_game"):
-        u = users[user_id]
-        send_msg(chat_id, f"здравствуй, {u['name']}! на счету у тя ${u['money']:,}.", reply_markup=main_kb())
-        send_msg(chat_id, "предлагаю заработать немного денег!\n\n☝️ жми на кнопку \"задания\".", reply_markup=main_kb())
+# ========== КЛАВИАТУРЫ ==========
+menu_keyboard = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="Меню"), KeyboardButton(text="Сообщение")]],
+    resize_keyboard=True
+)
+
+yes_no_keyboard = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="✔ создать человечка")]],
+    resize_keyboard=True
+)
+
+skin_keyboard = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="светлый"), KeyboardButton(text="тёмный")],
+              [KeyboardButton(text="я не мужик 😂")]],
+    resize_keyboard=True
+)
+
+hair_keyboard = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="ничего не нравится")]],
+    resize_keyboard=True
+)
+
+main_menu_keyboard = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="☰ жми на кнопку \"задания\"")]],
+    resize_keyboard=True
+)
+
+work_keyboard = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="таксист")],
+              [KeyboardButton(text="вернуться в главное меню")]],
+    resize_keyboard=True
+)
+
+taxi_keyboard = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="отправиться в путь 🚗🚙")],
+              [KeyboardButton(text="назад"), KeyboardButton(text="подробнее")]],
+    resize_keyboard=True
+)
+
+car_choice_keyboard = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="TAX2"), KeyboardButton(text="TAX5"), KeyboardButton(text="TAX3")],
+              [KeyboardButton(text="назад")]],
+    resize_keyboard=True
+)
+
+update_time_keyboard = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="обновить время")]],
+    resize_keyboard=True
+)
+
+# ========== FSM СОСТОЯНИЯ ==========
+class RegStates(StatesGroup):
+    waiting_for_nick = State()
+    waiting_for_skin = State()
+    waiting_for_hair = State()
+
+class GameStates(StatesGroup):
+    waiting_for_work = State()
+    waiting_for_taxi_start = State()
+    waiting_for_car_choice = State()
+    waiting_for_trip = State()
+
+# ========== РАНДОМНЫЕ ПАССАЖИРЫ ==========
+passenger_names = ["Писюн", "Кек", "Баклажан", "Сосиска", "Чебурек", 
+                   "Мотя", "Шуруп", "Батон", "Лысый", "Кукуся"]
+
+# ========== КОМАНДА СТАРТ ==========
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    
+    if user_id in user_data and user_data[user_id].get("reg_complete", False):
+        # Уже зареган
+        await show_main_menu(message, user_id)
     else:
-        send_msg(chat_id, "# bot бандит\n20,977 пользователей\n\nЧто умеет этот бот?\n\nбот бандит — это игра прямо в твоём Telegram-чате.\n\nтут можно зарабатывать деньги, делать бизнес, покупать недвижимость, тачки и шмотки (и многое другое).\n\n20 апреля\n\n/start 13:02\n\nрегистрация\n\nпривет, , вижу у тебя ещё нет человечка в бот бандите!\n\nдавай это исправим.")
-        send_msg(chat_id, "✔ создать человечка", reply_markup=skin_kb())
-        reg_data[user_id] = {"step": "skin"}
+        # Начинаем регистрацию
+        user_data[user_id] = {"reg_complete": False}
+        await message.answer(
+            "регистрация\n\n"
+            "привет, , вижу у тебя ещё нет человечка в бот бандите!\n\n"
+            "давай это исправим.",
+            reply_markup=yes_no_keyboard
+        )
+        await state.set_state(RegStates.waiting_for_skin)
 
-def cmd_profile(chat_id, user_id):
-    if user_id not in users:
-        send_msg(chat_id, "Ты ещё не зарегистрирован. Напиши /start")
-        return
-    u = users[user_id]
-    send_msg(chat_id, f"👤 {u['name']}\n🎨 {u['skin']}\n💇 {u['hair']}\n💰 ${u['money']:,}\n🚕 Поездок: {u.get('trips', 0)}\n📋 Задание: {'✅ выполнено' if u.get('task_done') else 'сделать 1 поездку таксиста'}", reply_markup=main_kb())
+# ========== РЕГИСТРАЦИЯ: ВЫБОР КОЖИ ==========
+@dp.message(RegStates.waiting_for_skin, F.text == "✔ создать человечка")
+async def reg_skin(message: types.Message, state: FSMContext):
+    await message.answer(
+        "выбирай цвет кожи:\n\n"
+        "светлый\n"
+        "тёмный\n"
+        "я не мужик 😂",
+        reply_markup=skin_keyboard
+    )
+    await state.set_state(RegStates.waiting_for_hair)
 
-def cmd_reset(chat_id, user_id):
-    users.pop(user_id, None)
-    reg_data.pop(user_id, None)
-    active_trips.pop(user_id, None)
-    send_msg(chat_id, "Персонаж сброшен. Напиши /start", reply_markup={"remove_keyboard": True})
+# ========== РЕГИСТРАЦИЯ: ПРИЧЕСКА ==========
+@dp.message(RegStates.waiting_for_hair, F.text.in_(["светлый", "тёмный", "я не мужик 😂"]))
+async def reg_hair(message: types.Message, state: FSMContext):
+    await state.update_data(skin=message.text)
+    await message.answer(
+        "теперь причёска — выбирай:",
+        reply_markup=hair_keyboard
+    )
+    await state.set_state(RegStates.waiting_for_nick)
 
-def cmd_work(chat_id, user_id):
-    if user_id not in users:
-        send_msg(chat_id, "Сначала регистрация: /start")
-        return
-    u = users[user_id]
-    send_msg(chat_id, f"хаайййййййййййййййййййййЙ, {u['name']}! На счету у тя ${u['money']:,}.\n\nработа\n\n{u['name']}, выбери работу, на которой хочешь сейчас работать.\n\nтаксист", reply_markup=car_kb())
+# ========== РЕГИСТРАЦИЯ: НИКНЕЙМ ==========
+@dp.message(RegStates.waiting_for_nick, F.text == "ничего не нравится")
+async def reg_nick(message: types.Message, state: FSMContext):
+    await message.answer(
+        "теперь напиши, как ты хочешь, чтобы я тебя называл:",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    await state.set_state(RegStates.waiting_for_nick)
 
-def start_taxi_trip(chat_id, user_id):
-    passengers = ["Писюн", "Джек Воробей", "Мистер Кэш", "Леди Удача", "Босс", "Серёга"]
-    dests = ["РОДИНА-МАТУШКА", "Аэропорт", "Казино Royale", "Пентхаус"]
-    passenger = random.choice(passengers)
-    dest = random.choice(dests)
-    travel_time = 5
+@dp.message(RegStates.waiting_for_nick)
+async def reg_save_nick(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    nick = message.text.strip()
     
-    msg = send_msg(chat_id, f"TAX4 TAX9 TAX1\n\n{users[user_id]['name']}, к тебе подсел {passenger}.\nВы направляетесь в город \"{dest}\" и прибудете через 1 мин 0 сек.\n\n😊 ты везёшь реального игрока и ты можешь с ним общаться — просто напиши своё сообщение в чат.\n\nКогда время выйдет, нажми на кнопку \"обновить время\", чтобы высадить пассажира.", reply_markup=trip_kb())
-    
-    if msg and msg.get("result"):
-        active_trips[user_id] = {
-            "passenger": passenger,
-            "end_time": time.time() + travel_time,
-            "msg_id": msg["result"]["message_id"],
-            "chat_id": chat_id
-        }
-
-def finish_trip(user_id, cb_id):
-    trip = active_trips.get(user_id)
-    if not trip:
-        send_cb(cb_id, "Нет активной поездки", True)
-        return
-    
-    if time.time() < trip["end_time"]:
-        left = int(trip["end_time"] - time.time())
-        send_cb(cb_id, f"⏳ Осталось {left} сек", True)
+    if len(nick) > 20:
+        await message.answer("Слишком длинное имя, попробуй короче:")
         return
     
-    u = users[user_id]
-    u["money"] += 2500
-    u["trips"] = u.get("trips", 0) + 1
+    user_data[user_id] = {
+        "nick": nick,
+        "balance": 50000,
+        "trips_done": 0,
+        "reg_complete": True
+    }
     
-    msg_text = f"✅ Поездка завершена! +$2500\n💰 Баланс: ${u['money']:,}"
-    
-    if not u.get("task_done") and u["trips"] >= 1:
-        u["task_done"] = True
-        u["money"] += 50000
-        msg_text += f"\n\n🎉 Задание выполнено! +$50000\nРазблокированы другие работы и магазин одежды."
-    
-    send_cb(cb_id, "✅ Пассажир высажен!")
-    send_msg(trip["chat_id"], msg_text, reply_markup=main_kb())
-    del_msg(trip["chat_id"], trip["msg_id"])
-    del active_trips[user_id]
+    await message.answer(
+        f"отлично, {nick}, ты успешно закончил регистрацию!\n\n"
+        f"бот бандит — это твоя жизнь. тут можно зарабатывать деньги, зарабатывать лёгкие деньги, "
+        f"делать бизнес, покупать недвижимость, тачки и шмотки.\n\n"
+        f"😂 давай покажу тебе где тут что.\n\n"
+        f"погнали",
+        reply_markup=main_menu_keyboard
+    )
+    await state.clear()
+    await show_main_menu(message, user_id)
 
-# ========== ОБРАБОТКА CALLBACK ==========
-def handle_callback(cb):
-    cb_id = cb["id"]
-    data = cb["data"]
-    user_id = cb["from"]["id"]
-    chat_id = cb["message"]["chat"]["id"]
-    msg_id = cb["message"]["message_id"]
+# ========== ГЛАВНОЕ МЕНЮ ==========
+async def show_main_menu(message: types.Message, user_id: int):
+    user = user_data.get(user_id, {})
+    nick = user.get("nick", "игрок")
+    balance = user.get("balance", 0)
     
-    # Регистрация: выбор кожи
-    if data == "skin_light":
-        reg_data[user_id]["skin"] = "светлый"
-        edit_msg(chat_id, msg_id, "выбирай цвет кожи:\nсветлый\nтёмный\n\nя не мужик 😂\n\nтеперь причёска — выбирай:", reply_markup=hair_kb())
-        reg_data[user_id]["step"] = "hair"
-    elif data == "skin_dark":
-        reg_data[user_id]["skin"] = "тёмный"
-        edit_msg(chat_id, msg_id, "выбирай цвет кожи:\nсветлый\nтёмный\n\nя не мужик 😂\n\nтеперь причёска — выбирай:", reply_markup=hair_kb())
-        reg_data[user_id]["step"] = "hair"
-    elif data == "skin_uni":
-        reg_data[user_id]["skin"] = "унисекс 😂"
-        edit_msg(chat_id, msg_id, "выбирай цвет кожи:\nсветлый\nтёмный\n\nя не мужик 😂\n\nтеперь причёска — выбирай:", reply_markup=hair_kb())
-        reg_data[user_id]["step"] = "hair"
-    
-    # Выбор причёски
-    elif data in ["h1", "h2", "h3", "h4", "h5"]:
-        hair_map = {"h1": "Классика", "h2": "Андеркат", "h3": "Дреды", "h4": "Лысый", "h5": "😎 ничего не нравится"}
-        reg_data[user_id]["hair"] = hair_map[data]
-        edit_msg(chat_id, msg_id, "теперь напиши, как ты хочешь, чтобы я тебя называл:", reply_markup=None)
-        reg_data[user_id]["step"] = "name"
-    
-    # Работа таксиста
-    elif data == "car_correct":
-        del_msg(chat_id, msg_id)
-        send_cb(cb_id, "✅ Ты выбрал свою машину!")
-        send_msg(chat_id, f"Fffffffdd, ты находишься в таксопарке города \"LAS-VEGAS\".\n\n📍 транспорт — Cabbie (скорость 20 км/мин)\n🚗 поездок до завершения задания — 1\n\nотправиться в путь 🚗🚗🚗\n\nТы взял ключи от своей ласточки, на них написан номер \"TAX3\". Выбирай куда садиться, клиент уже ждёт.\n\nTAX2 TAX5 TAX3")
-        start_taxi_trip(chat_id, user_id)
-    elif data == "car_wrong":
-        send_cb(cb_id, "❌ Не та машина!", True)
-        edit_msg(chat_id, msg_id, f"бот бандит\nты выбрал не ту машину\n\n😊 ты стоял минут 10 и теребил замок чужого такси, клиент отменил заказ...\n\n{users[user_id]['name']}, ты находишься в таксопарке города \"LAS-VEGAS\".\n\n👌 транспорт — Cabbie (скорость 20 км/мин)\n👌 поездок до завершения задания — 1", reply_markup=car_kb())
-    elif data == "back_work":
-        del_msg(chat_id, msg_id)
-        cmd_work(chat_id, user_id)
-    
-    # Завершение поездки
-    elif data == "finish_trip":
-        finish_trip(user_id, cb_id)
-    
-    send_cb(cb_id)
+    await message.answer(
+        f"здравствуй, {nick}! на счету у тя\n"
+        f"${balance:,}".replace(",", "."),
+        reply_markup=main_menu_keyboard
+    )
 
-# ========== ОСНОВНОЙ ЦИКЛ ==========
-def main():
-    last_update = 0
-    print("✅ Бот бандит запущен!")
+@dp.message(F.text == "☰ жми на кнопку \"задания\"")
+async def show_tasks(message: types.Message):
+    await message.answer(
+        "- текущее задание:\n\n"
+        "- сделать 1 поездку на работе таксиста.\n\n"
+        "- награда:\n\n"
+        "- разблокировка других работ;\n"
+        "- разблокировка магазина одежды;\n"
+        "- $50.000.\n\n"
+        "- работу таксиста можно найти в главном /menu → работа → таксист"
+    )
+
+@dp.message(F.text == "Меню")
+async def menu_button(message: types.Message):
+    user_id = message.from_user.id
+    await show_main_menu(message, user_id)
+
+# ========== РАБОТА ==========
+@dp.message(F.text == "вернуться в главное меню")
+async def back_to_menu(message: types.Message):
+    user_id = message.from_user.id
+    await show_main_menu(message, user_id)
+
+@dp.message(F.text == "работа")
+async def show_work(message: types.Message):
+    user_id = message.from_user.id
+    user = user_data.get(user_id, {})
+    nick = user.get("nick", "игрок")
+    balance = user.get("balance", 0)
     
-    while True:
-        try:
-            url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates?timeout=30&offset={last_update + 1}"
-            req = urllib.request.Request(url)
-            with urllib.request.urlopen(req, timeout=35) as resp:
-                data = json.loads(resp.read().decode())
-                
-                if data.get("result"):
-                    for update in data["result"]:
-                        last_update = update["update_id"]
-                        
-                        # Обычные сообщения
-                        if "message" in update:
-                            msg = update["message"]
-                            chat_id = msg["chat"]["id"]
-                            user_id = msg["from"]["id"]
-                            text = msg.get("text", "")
-                            
-                            if text == "/start":
-                                cmd_start(chat_id, user_id)
-                            elif text == "🚕 Работа / задания":
-                                cmd_work(chat_id, user_id)
-                            elif text == "👤 Профиль":
-                                cmd_profile(chat_id, user_id)
-                            elif text == "🔄 Сбросить персонажа":
-                                cmd_reset(chat_id, user_id)
-                            elif user_id in reg_data and reg_data[user_id].get("step") == "name" and text.strip():
-                                name = text.strip()[:30]
-                                rd = reg_data[user_id]
-                                users[user_id] = {
-                                    "name": name,
-                                    "skin": rd["skin"],
-                                    "hair": rd["hair"],
-                                    "money": 50000,
-                                    "trips": 0,
-                                    "task_done": False,
-                                    "in_game": True
-                                }
-                                send_msg(chat_id, f"отлично, {name}, ты успешно закончил регистрацию!\n\nbot бандит — это твоя жизнь. тут можно зарабатывать деньги, зарабатывать лёгкие деньги, делать бизнес, покупать недвижимость, тачки и шмотки.\n\n👏 давай покажу тебе где тут что.\n\nпогнали")
-                                send_msg(chat_id, f"здравствуй, {name}! на счету у тя $50.000.\n\nпредлагаю заработать немного денег!\n\n☝️ жми на кнопку \"задания\".", reply_markup=main_kb())
-                                del reg_data[user_id]
-                            elif user_id in active_trips:
-                                passenger = active_trips[user_id]["passenger"]
-                                send_msg(chat_id, f"💬 {passenger}: «Ха-ха, отличный разговор! Скоро приедем.»")
-                            elif text:
-                                send_msg(chat_id, "Используй кнопки меню", reply_markup=main_kb())
-                        
-                        # Callback-запросы (кнопки)
-                        elif "callback_query" in update:
-                            handle_callback(update["callback_query"])
-        
-        except Exception as e:
-            print(f"Ошибка: {e}")
-            time.sleep(5)
+    await message.answer(
+        f"вернуться в главное меню\n\n"
+        f"ky, {nick}! на счету у тя ${balance:,}".replace(",", "."),
+        reply_markup=ReplyKeyboardRemove()
+    )
+    await message.answer(
+        f"работа\n\n"
+        f"{nick}, выбери работу, на которой хочешь сейчас работать.",
+        reply_markup=work_keyboard
+    )
+
+@dp.message(F.text == "таксист")
+async def taxi_start(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    user = user_data.get(user_id, {})
+    nick = user.get("nick", "игрок")
+    trips_done = user.get("trips_done", 0)
+    required = 1 - trips_done
+    
+    await message.answer(
+        f"Таксист\n\n"
+        f"{nick}, ты находишься в таксопарке города \"LAS-VEGAS\".\n\n"
+        f"транспорт — Cabbie (скорость 20 км/мин)\n"
+        f"поездок до завершения задания — {required}",
+        reply_markup=taxi_keyboard
+    )
+    await state.set_state(GameStates.waiting_for_taxi_start)
+
+@dp.message(GameStates.waiting_for_taxi_start, F.text == "отправиться в путь 🚗🚙")
+async def taxi_choose_car(message: types.Message, state: FSMContext):
+    await message.answer(
+        "отправиться в путь\n\n"
+        "ты взял ключи от своей ласточки,\n"
+        "на них написан номер \"ТАХ3\". выбирай\n"
+        "куда садиться, клиент уже ждёт.",
+        reply_markup=car_choice_keyboard
+    )
+    await state.set_state(GameStates.waiting_for_car_choice)
+
+# ========== ПРОВЕРКА МАШИНЫ ==========
+@dp.message(GameStates.waiting_for_car_choice, F.text == "назад")
+async def back_to_taxi(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    nick = user_data.get(user_id, {}).get("nick", "игрок")
+    trips_done = user_data.get(user_id, {}).get("trips_done", 0)
+    required = 1 - trips_done
+    
+    await message.answer(
+        f"Таксист\n\n"
+        f"{nick}, ты находишься в таксопарке города \"LAS-VEGAS\".\n\n"
+        f"транспорт — Cabbie (скорость 20 км/мин)\n"
+        f"поездок до завершения задания — {required}",
+        reply_markup=taxi_keyboard
+    )
+    await state.set_state(GameStates.waiting_for_taxi_start)
+
+@dp.message(GameStates.waiting_for_car_choice, F.text.in_(["TAX2", "TAX5"]))
+async def taxi_wrong_car(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    nick = user_data.get(user_id, {}).get("nick", "игрок")
+    trips_done = user_data.get(user_id, {}).get("trips_done", 0)
+    required = 1 - trips_done
+    
+    await message.answer(
+        f"ты выбрал не ту машину.\n\n"
+        f"ты стоял минут 10 и теребил замок чужого такси, клиент отменил заказ...\n\n"
+        f"{nick}, ты находишься в таксопарке города \"LAS-VEGAS\".\n\n"
+        f"транспорт — Cabbie (скорость 20 км/мин)\n"
+        f"поездок до завершения задания — {required}",
+        reply_markup=taxi_keyboard
+    )
+    await state.set_state(GameStates.waiting_for_taxi_start)
+
+@dp.message(GameStates.waiting_for_car_choice, F.text == "TAX3")
+async def taxi_right_car(message: types.Message, state: FSMContext):
+    await message.answer(
+        "ты сел в своё такси ТАХ3 и завёл двигатель.",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    
+    # Рандомный пассажир
+    passenger = random.choice(passenger_names)
+    await state.update_data(passenger=passenger)
+    
+    await message.answer(
+        f"{user_data[message.from_user.id]['nick']}, к тебе подсел {passenger}.\n"
+        f"вы направляетесь в город\n"
+        f"\"РОДИНА-МАТУШКА\" и прибудете\n"
+        f"через 1 мин 0 сек.\n\n"
+        f"💬 ты везёшь реального игрока и ты\n"
+        f"можешь с ним общаться — просто\n"
+        f"напиши своё сообщение в чат.\n\n"
+        f"📌 когда время выйдет, нажми на\n"
+        f"кнопку \"обновить время\", чтобы\n"
+        f"высадить пассажира.",
+        reply_markup=update_time_keyboard
+    )
+    await state.set_state(GameStates.waiting_for_trip)
+
+# ========== ЗАВЕРШЕНИЕ ПОЕЗДКИ ==========
+@dp.message(GameStates.waiting_for_trip, F.text == "обновить время")
+async def finish_trip(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    data = await state.get_data()
+    passenger = data.get("passenger", "пассажир")
+    
+    # Обновляем данные
+    user_data[user_id]["balance"] += 50000
+    user_data[user_id]["trips_done"] = 1
+    
+    nick = user_data[user_id]["nick"]
+    new_balance = user_data[user_id]["balance"]
+    
+    await message.answer(
+        f"ты высадил {passenger}.\n"
+        f"Поездка завершена.\n\n"
+        f"✅ задание выполнено!\n"
+        f"+$50.000\n"
+        f"Разблокированы другие работы и магазин одежды.\n\n"
+        f"Твой баланс: ${new_balance:,}".replace(",", "."),
+        reply_markup=main_menu_keyboard
+    )
+    await state.clear()
+
+# ========== ЗАПУСК ==========
+async def main():
+    print("Бот запущен!")
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

@@ -1,514 +1,301 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>bot бандит - криминальная игра в Telegram</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+import asyncio
+import random
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.filters import Command, StateFilter
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
-        body {
-            background: #0a0c12;
-            font-family: 'Segoe UI', system-ui, -apple-system, 'Roboto', sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            padding: 20px;
-        }
+# ========== КОНФИГ ==========
+BOT_TOKEN = "ВАШ_ТОКЕН_БОТА"  # Замените на реальный токен
 
-        .phone {
-            max-width: 420px;
-            width: 100%;
-            background: #0f1117;
-            border-radius: 36px;
-            box-shadow: 0 25px 45px rgba(0, 0, 0, 0.5), 0 0 0 8px #2c2f3a;
-            overflow: hidden;
-            position: relative;
-        }
+bot = Bot(token=BOT_TOKEN)
+storage = MemoryStorage()
+dp = Dispatcher(storage=storage)
 
-        .header {
-            background: #1a1d27;
-            padding: 18px 20px 12px 20px;
-            border-bottom: 1px solid #2a2e3c;
-        }
+# ========== ХРАНИЛИЩЕ ДАННЫХ ПОЛЬЗОВАТЕЛЕЙ ==========
+user_data = {}  # user_id -> dict
 
-        .bot-name {
-            font-size: 24px;
-            font-weight: 800;
-            color: #ffd966;
-            letter-spacing: -0.5px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
+# ========== FSM СОСТОЯНИЯ ==========
+class RegStates(StatesGroup):
+    waiting_skin = State()
+    waiting_hair = State()
+    waiting_name = State()
 
-        .bot-name span:first-child {
-            background: #2a2e3c;
-            padding: 4px 12px;
-            border-radius: 40px;
-            font-size: 14px;
-            font-weight: normal;
-            color: #bbb;
-        }
+class TaxiStates(StatesGroup):
+    waiting_car_choice = State()
+    in_trip = State()
 
-        .stats {
-            display: flex;
-            gap: 12px;
-            margin-top: 12px;
-            font-size: 13px;
-            color: #8e92a2;
-        }
+# ========== КЛАВИАТУРЫ ==========
+def main_menu_kb():
+    kb = [
+        [KeyboardButton(text="🚕 Работа / задания")],
+        [KeyboardButton(text="👤 Мой профиль")],
+        [KeyboardButton(text="🔄 Сбросить персонажа")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
-        .chat-area {
-            height: 540px;
-            overflow-y: auto;
-            padding: 16px 18px;
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-            background: #0b0e14;
-            scroll-behavior: smooth;
-        }
+def cancel_kb():
+    kb = [[KeyboardButton(text="◀ Отмена")]]
+    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
-        .message {
-            background: #151a24;
-            border-radius: 20px;
-            padding: 14px 16px;
-            border-left: 3px solid #ffb347;
-            color: #eef2ff;
-            font-size: 15px;
-            line-height: 1.45;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-        }
+# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
+def get_player(user_id):
+    return user_data.get(user_id, {})
 
-        .message strong {
-            color: #ffb347;
-        }
+def update_player(user_id, **kwargs):
+    if user_id not in user_data:
+        user_data[user_id] = {}
+    user_data[user_id].update(kwargs)
 
-        .game-panel {
-            background: #10131c;
-            border-radius: 24px;
-            padding: 18px;
-            margin: 4px 0;
-            border: 1px solid #292e3e;
-        }
+def add_money(user_id, amount):
+    if user_id in user_data:
+        user_data[user_id]["money"] = user_data[user_id].get("money", 50000) + amount
 
-        .button-group {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 12px;
-            margin-top: 18px;
-        }
+# ========== ОБРАБОТЧИКИ ==========
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message):
+    user_id = message.from_user.id
+    if user_id in user_data and user_data[user_id].get("in_game"):
+        await message.answer(
+            f"👋 С возвращением, {user_data[user_id]['name']}!\n"
+            f"💰 Баланс: ${user_data[user_id]['money']:,}\n"
+            f"📋 Задание: {'✅ выполнено' if user_data[user_id].get('task_done') else 'сделать 1 поездку таксиста'}",
+            reply_markup=main_menu_kb()
+        )
+    else:
+        await message.answer(
+            "🤖 *bot бандит*\n\n"
+            "Это игра прямо в Telegram.\n"
+            "💰 Можно зарабатывать деньги, делать бизнес, покупать тачки и недвижку.\n\n"
+            "Давай зарегистрируем твоего персонажа!",
+            parse_mode="Markdown"
+        )
+        await message.answer("Выбери цвет кожи:", reply_markup=cancel_kb())
+        await RegStates.waiting_skin.set()
 
-        .btn {
-            background: #232a36;
-            border: none;
-            padding: 12px 18px;
-            border-radius: 60px;
-            font-weight: 600;
-            font-size: 15px;
-            color: white;
-            cursor: pointer;
-            transition: 0.2s;
-            flex: 1 0 auto;
-            text-align: center;
-            font-family: inherit;
-            box-shadow: 0 1px 2px black;
-        }
+@dp.message(RegStates.waiting_skin)
+async def reg_skin(message: types.Message, state: FSMContext):
+    skin = message.text.lower()
+    if skin not in ["светлый", "тёмный", "я не мужик 😂"]:
+        await message.answer("Пожалуйста, выбери один из вариантов: светлый, тёмный или 'я не мужик 😂'")
+        return
+    await state.update_data(skin=skin)
+    await message.answer("Теперь выбери причёску (или нажми 'ничего не нравится'):",
+                         reply_markup=ReplyKeyboardMarkup(
+                             keyboard=[["Классика", "Андеркат"], ["Дреды", "Лысый"], ["ничего не нравится"]],
+                             resize_keyboard=True
+                         ))
+    await RegStates.waiting_hair.set()
 
-        .btn-primary {
-            background: #ff914d;
-            color: #0b0e14;
-            font-weight: 800;
-        }
+@dp.message(RegStates.waiting_hair)
+async def reg_hair(message: types.Message, state: FSMContext):
+    hair = message.text
+    if hair not in ["Классика", "Андеркат", "Дреды", "Лысый", "ничего не нравится"]:
+        await message.answer("Пожалуйста, выбери причёску из предложенных.")
+        return
+    if hair == "ничего не нравится":
+        hair = "😎 бунтарская"
+    await state.update_data(hair=hair)
+    await message.answer("Отлично! Теперь напиши, как я буду тебя называть:",
+                         reply_markup=cancel_kb())
+    await RegStates.waiting_name.set()
 
-        .btn-warning {
-            background: #3a2c1f;
-            border: 1px solid #ffb347;
-            color: #ffcd85;
-        }
+@dp.message(RegStates.waiting_name)
+async def reg_name(message: types.Message, state: FSMContext):
+    name = message.text.strip()
+    if not name or len(name) > 30:
+        await message.answer("Имя не может быть пустым или слишком длинным (макс 30 символов).")
+        return
+    data = await state.get_data()
+    user_id = message.from_user.id
+    update_player(user_id,
+                  name=name,
+                  skin=data['skin'],
+                  hair=data['hair'],
+                  money=50000,
+                  task_done=False,
+                  taxi_trips=0,
+                  in_game=True)
+    await state.clear()
+    await message.answer(
+        f"✨ Отлично, {name}! Регистрация завершена.\n"
+        f"🎨 Кожа: {data['skin']}\n💇 Причёска: {data['hair']}\n"
+        f"💰 Стартовый капитал: $50,000\n\n"
+        f"📌 Твоё первое задание: **сделать 1 поездку на такси**\n"
+        f"Используй кнопку '🚕 Работа / задания'",
+        reply_markup=main_menu_kb(),
+        parse_mode="Markdown"
+    )
 
-        .btn-success {
-            background: #2c5a3a;
-            color: #c0ffb0;
-        }
+@dp.message(F.text == "👤 Мой профиль")
+async def profile(message: types.Message):
+    user_id = message.from_user.id
+    p = get_player(user_id)
+    if not p.get("in_game"):
+        await message.answer("Ты ещё не зарегистрирован. Напиши /start")
+        return
+    await message.answer(
+        f"👤 *{p['name']}*\n"
+        f"🎨 Кожа: {p['skin']}\n💇 Причёска: {p['hair']}\n"
+        f"💰 Деньги: ${p['money']:,}\n"
+        f"🚕 Поездок таксистом: {p.get('taxi_trips', 0)}\n"
+        f"📋 Задание: {'✅ выполнено' if p.get('task_done') else 'сделать 1 поездку таксиста'}",
+        parse_mode="Markdown",
+        reply_markup=main_menu_kb()
+    )
 
-        .inline-buttons {
-            display: flex;
-            gap: 10px;
-            margin-top: 12px;
-            flex-wrap: wrap;
-        }
+@dp.message(F.text == "🚕 Работа / задания")
+async def work_menu(message: types.Message):
+    user_id = message.from_user.id
+    p = get_player(user_id)
+    if not p.get("in_game"):
+        await message.answer("Сначала зарегистрируйся: /start")
+        return
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚕 Таксист", callback_data="job_taxi")],
+        [InlineKeyboardButton(text="🏭 Бизнесмен (скоро)", callback_data="job_business")],
+        [InlineKeyboardButton(text="◀ Назад", callback_data="back_to_main")]
+    ])
+    await message.answer("Выбери работу:", reply_markup=kb)
 
-        .money {
-            color: #6fcf97;
-            font-weight: bold;
-        }
+@dp.callback_query(F.data == "job_taxi")
+async def taxi_job_start(callback: types.CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    p = get_player(user_id)
+    if not p.get("in_game"):
+        await callback.answer("Зарегистрируйся через /start")
+        return
+    await callback.message.delete()
+    await callback.message.answer(
+        "🚕 *Таксопарк LAS-VEGAS*\n"
+        "Твой автомобиль: Cabbie (20 км/мин)\n"
+        f"Поездок до выполнения задания: {0 if p.get('task_done') else 1}\n\n"
+        "Выбери машину:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="TAX2", callback_data="car_wrong"),
+             InlineKeyboardButton(text="TAX5", callback_data="car_wrong"),
+             InlineKeyboardButton(text="TAX3 (твоя)", callback_data="car_correct")],
+            [InlineKeyboardButton(text="TAX4", callback_data="car_wrong"),
+             InlineKeyboardButton(text="TAX9", callback_data="car_wrong"),
+             InlineKeyboardButton(text="TAX1", callback_data="car_wrong")],
+            [InlineKeyboardButton(text="◀ Назад", callback_data="back_to_work")]
+        ])
+    )
+    await TaxiStates.waiting_car_choice.set()
 
-        .footer-input {
-            background: #11141e;
-            padding: 12px 18px;
-            border-top: 1px solid #252a38;
-            display: flex;
-            gap: 8px;
-        }
+@dp.callback_query(F.data == "car_wrong", StateFilter(TaxiStates.waiting_car_choice))
+async def wrong_car(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer("❌ Не та машина!")
+    await callback.message.answer("😵 Ты теребил замок чужого такси, клиент уехал. Попробуй ещё раз.")
+    await callback.message.delete()
+    # повторно показать выбор
+    await taxi_job_start(callback, state)
 
-        .footer-input input {
-            flex: 1;
-            background: #1e232f;
-            border: none;
-            padding: 12px;
-            border-radius: 32px;
-            color: white;
-            font-size: 14px;
-            outline: none;
-        }
+@dp.callback_query(F.data == "car_correct", StateFilter(TaxiStates.waiting_car_choice))
+async def correct_car(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer("✅ Ты взял ключи от своей ласточки")
+    await callback.message.delete()
+    # запускаем поездку
+    await start_trip(callback.message, state)
 
-        .footer-input button {
-            background: #ff914d;
-            border: none;
-            border-radius: 32px;
-            padding: 0 20px;
-            font-weight: bold;
-            cursor: pointer;
-        }
+async def start_trip(message: types.Message, state: FSMContext):
+    passengers = ["Писюн", "Джек Воробей", "Мистер Кэш", "Леди Удача", "Босс", "Серёга"]
+    destinations = ["РОДИНА-МАТУШКА", "Аэропорт", "Казино Royale", "Пентхаус", "Полицейский участок", "Пляж"]
+    passenger = random.choice(passengers)
+    destination = random.choice(destinations)
+    travel_time = 5  # секунд (в реальном боте можно сделать 60, но для теста 5)
 
-        .chat-area::-webkit-scrollbar {
-            width: 4px;
-        }
-        .chat-area::-webkit-scrollbar-track {
-            background: #1a1e2a;
-        }
-        .chat-area::-webkit-scrollbar-thumb {
-            background: #ff914d;
-            border-radius: 10px;
-        }
-    </style>
-</head>
-<body>
-<div class="phone">
-    <div class="header">
-        <div class="bot-name">
-            <span># bot бандит</span>
-            <span style="font-size:14px;">20,977 📢</span>
-        </div>
-        <div class="stats">
-            <span>👥 пользователей</span>
-            <span>⚡ живая игра</span>
-        </div>
-    </div>
+    await state.update_data(passenger=passenger, destination=destination, end_time=asyncio.get_event_loop().time() + travel_time)
+    await message.answer(
+        f"🚕 К тебе подсел *{passenger}*.\n"
+        f"Едем в город *{destination}*. Прибудем через {travel_time} сек.\n"
+        "Ты можешь общаться с пассажиром через чат.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Обновить время / высадить", callback_data="finish_trip")]
+        ])
+    )
+    await TaxiStates.in_trip.set()
 
-    <div class="chat-area" id="chatMessages">
-        <div class="message"><strong>бот бандит</strong> - это игра прямо в твоём Telegram-чате.<br>💰 можно зарабатывать деньги, делать бизнес, покупать недвижимость, тачки и шмотки.</div>
-        <div class="message">📅 20 апреля<br>🔹 /start 13:02</div>
-        <div class="game-panel" id="regPanel">
-            <div><strong>✨ регистрация</strong></div>
-            <div style="margin: 12px 0;">привет! у тебя ещё нет человечка в бот бандите!<br>давай это исправим.</div>
-            <div class="button-group">
-                <button class="btn btn-primary" id="createHumanBtn">✔ создать человечка</button>
-            </div>
-        </div>
-    </div>
+@dp.callback_query(F.data == "finish_trip", StateFilter(TaxiStates.in_trip))
+async def finish_trip(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    user_id = callback.from_user.id
+    now = asyncio.get_event_loop().time()
+    if now < data.get('end_time', 0):
+        remaining = int(data['end_time'] - now)
+        await callback.answer(f"⏳ Ещё {remaining} сек. Подождите!")
+        return
 
-    <div class="footer-input">
-        <input type="text" id="chatInput" placeholder="Напиши сообщение...">
-        <button id="sendMsgBtn">➤</button>
-    </div>
-</div>
+    # Поездка завершена
+    earnings = 2500
+    add_money(user_id, earnings)
+    p = get_player(user_id)
+    # Обновляем прогресс задания
+    trips = p.get("taxi_trips", 0) + 1
+    update_player(user_id, taxi_trips=trips, money=p["money"] + earnings)
 
-<script>
-    let player = {
-        name: null,
-        skinColor: null,
-        hair: null,
-        money: 50000,
-        taxiTripsDone: 0,
-        otherJobsUnlocked: false,
-        clothesShopUnlocked: false,
-        inGame: false,
-        currentTrip: null,
-        tripTimer: null
-    };
+    task_completed = False
+    if not p.get("task_done") and trips >= 1:
+        update_player(user_id, task_done=True)
+        add_money(user_id, 50000)
+        task_completed = True
+        await callback.message.answer(
+            f"🎉 *Задание выполнено!*\n"
+            f"+$50,000 за задание\n"
+            f"Тебе открыты другие работы и магазин одежды.",
+            parse_mode="Markdown"
+        )
 
-    const chatContainer = document.getElementById('chatMessages');
-    const regPanelDiv = document.getElementById('regPanel');
+    await callback.message.answer(
+        f"✅ Вы высадили пассажира *{data['passenger']}*.\n"
+        f"💰 Заработано: ${earnings:,}\n"
+        f"💵 Баланс: ${get_player(user_id)['money']:,}\n"
+        f"🚕 Всего поездок: {trips}",
+        parse_mode="Markdown",
+        reply_markup=main_menu_kb()
+    )
+    await state.clear()
 
-    function addMessage(text, isSystem = true, isError = false) {
-        const msgDiv = document.createElement('div');
-        msgDiv.className = 'message';
-        if (isError) msgDiv.style.borderLeftColor = '#e34d4d';
-        msgDiv.innerHTML = isSystem ? `<strong>🤖 бот бандит</strong><br>${text}` : text;
-        chatContainer.appendChild(msgDiv);
-        chatContainer.scrollTop = chatContainer.scrollHeight;
-    }
+@dp.callback_query(F.data == "back_to_work")
+async def back_to_work(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.delete()
+    await work_menu(callback.message)
 
-    function updateMainUI() {
-        if (!player.inGame) {
-            if (regPanelDiv) regPanelDiv.style.display = 'block';
-            return;
-        }
-        if (regPanelDiv) regPanelDiv.style.display = 'none';
+@dp.callback_query(F.data == "back_to_main")
+async def back_to_main(callback: types.CallbackQuery):
+    await callback.message.delete()
+    await callback.message.answer("Главное меню", reply_markup=main_menu_kb())
 
-        const existingInfo = document.getElementById('dynamicGameInfo');
-        if (existingInfo) existingInfo.remove();
+@dp.message(F.text == "🔄 Сбросить персонажа")
+async def reset_character(message: types.Message):
+    user_id = message.from_user.id
+    if user_id in user_data:
+        del user_data[user_id]
+    await message.answer("Персонаж сброшен. Напиши /start, чтобы создать нового.", reply_markup=types.ReplyKeyboardRemove())
 
-        const infoPanel = document.createElement('div');
-        infoPanel.id = 'dynamicGameInfo';
-        infoPanel.className = 'game-panel';
-        infoPanel.innerHTML = `
-            <div>👋 здравствуй, ${player.name || 'игрок'}! на счету у тя <span class="money">$${player.money.toLocaleString()}</span>.</div>
-            <div style="margin: 10px 0;">📋 задание: <strong>сделать 1 поездку на работе таксиста</strong> ${player.taxiTripsDone >= 1 ? '✅ выполнено!' : `(сделано ${player.taxiTripsDone}/1)`}</div>
-            <div class="button-group">
-                <button class="btn" id="showJobsBtn">🚕 работа / задания</button>
-                <button class="btn" id="resetGameBtn" style="background:#2a2a36;">🔄 пересоздать персонажа</button>
-            </div>
-        `;
-        chatContainer.appendChild(infoPanel);
+@dp.message(F.text == "◀ Отмена")
+async def cancel_action(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Действие отменено.", reply_markup=main_menu_kb())
 
-        document.getElementById('showJobsBtn')?.addEventListener('click', () => showWorkMenu());
-        document.getElementById('resetGameBtn')?.addEventListener('click', () => resetGame());
-        
-        if (player.taxiTripsDone >= 1 && !player.otherJobsUnlocked) {
-            player.otherJobsUnlocked = true;
-            player.clothesShopUnlocked = true;
-            addMessage(`🎉 Поздравляю! Ты выполнил первое задание! Разблокированы: другие работы, магазин одежды. +$50.000!`);
-            player.money += 50000;
-            addMessage(`💰 Твой баланс: $${player.money.toLocaleString()}. Теперь можешь зайти в /menu → работа`);
-            updateMainUI();
-        }
-    }
+@dp.message()
+async def chat_with_passenger(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    current_state = await state.get_state()
+    if current_state == TaxiStates.in_trip:
+        data = await state.get_data()
+        await message.answer(f"💬 *{data.get('passenger', 'Пассажир')}*: «Ха-ха, отличный разговор! Скоро приедем.»", parse_mode="Markdown")
+    else:
+        await message.answer("Используй кнопки меню.", reply_markup=main_menu_kb())
 
-    function showWorkMenu() {
-        addMessage(`🚖 Работа: выбери профессию, ${player.name}.`, true);
-        const workPanel = document.createElement('div');
-        workPanel.className = 'game-panel';
-        workPanel.innerHTML = `
-            <div><strong>Доступные работы</strong></div>
-            <div class="button-group">
-                <button class="btn btn-primary" id="taxiWorkBtn">🚕 Таксист (доступен)</button>
-                ${player.otherJobsUnlocked ? '<button class="btn" id="otherWorkBtn" disabled style="opacity:0.6;">🏭 Бизнесмен (скоро)</button>' : '<button class="btn" disabled>🔒 Другие работы (выполни задание)</button>'}
-                <button class="btn" id="backToMenuBtn">◀ Назад</button>
-            </div>
-        `;
-        chatContainer.appendChild(workPanel);
-        chatContainer.scrollTop = chatContainer.scrollHeight;
+# ========== ЗАПУСК ==========
+async def main():
+    await dp.start_polling(bot)
 
-        document.getElementById('taxiWorkBtn')?.addEventListener('click', () => {
-            workPanel.remove();
-            startTaxiJob();
-        });
-        document.getElementById('backToMenuBtn')?.addEventListener('click', () => {
-            workPanel.remove();
-            updateMainUI();
-        });
-    }
-
-    function startTaxiJob() {
-        addMessage(`🚕 Ты находишься в таксопарке города "LAS-VEGAS". Транспорт - Cabbie (скорость 20 км/мин). Поездок до завершения задания: ${player.taxiTripsDone >= 1 ? '0 (задание готово!)' : '1'}`);
-        
-        const taxiPanel = document.createElement('div');
-        taxiPanel.className = 'game-panel';
-        taxiPanel.innerHTML = `
-            <div>📍 твой автомобиль: <strong>Cabbie</strong> (номер TAX3)</div>
-            <div>🚗 выбери машину, чтобы начать поездку:</div>
-            <div class="inline-buttons">
-                <button class="btn btn-warning" data-car="TAX2">TAX2</button>
-                <button class="btn btn-warning" data-car="TAX5">TAX5</button>
-                <button class="btn btn-primary" data-car="TAX3">TAX3 (твоя)</button>
-                <button class="btn" data-car="TAX4">TAX4</button>
-                <button class="btn" data-car="TAX9">TAX9</button>
-                <button class="btn" data-car="TAX1">TAX1</button>
-            </div>
-            <div class="button-group" style="margin-top:12px;">
-                <button class="btn" id="cancelTaxiBtn">◀ Вернуться</button>
-            </div>
-        `;
-        chatContainer.appendChild(taxiPanel);
-        
-        const carBtns = taxiPanel.querySelectorAll('[data-car]');
-        carBtns.forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const chosen = btn.getAttribute('data-car');
-                if (chosen !== 'TAX3') {
-                    addMessage(`😵 ты выбрал не ту машину! Ты теребил замок чужого такси, клиент отменил заказ... Попробуй ещё раз.`, true, true);
-                    taxiPanel.remove();
-                    setTimeout(() => startTaxiJob(), 300);
-                } else {
-                    addMessage(`✅ Ты взял ключи от своей ласточки "${chosen}". Клиент уже ждёт!`);
-                    taxiPanel.remove();
-                    startPassengerTrip();
-                }
-            });
-        });
-        document.getElementById('cancelTaxiBtn')?.addEventListener('click', () => {
-            taxiPanel.remove();
-            showWorkMenu();
-        });
-    }
-
-    function startPassengerTrip() {
-        if (player.currentTrip) {
-            addMessage(`⚠️ У тебя уже есть активная поездка! Заверши её.`);
-            return;
-        }
-        const randomNames = ["Писюн", "Джек Воробей", "Мистер Кэш", "Леди Удача", "Босс", "Серёга"];
-        const destinations = ["РОДИНА-МАТУШКА", "Аэропорт", "Казино Royale", "Пентхаус", "Полицейский участок", "Пляж Лас-Вегаса"];
-        const passenger = randomNames[Math.floor(Math.random() * randomNames.length)];
-        const dest = destinations[Math.floor(Math.random() * destinations.length)];
-        const travelSeconds = 5;
-        
-        addMessage(`🚕 К тебе подсел <strong>${passenger}</strong>. Вы направляетесь в город "${dest}". Прибудете через ${travelSeconds} сек. Общайся с пассажиром через чат!`);
-        
-        player.currentTrip = {
-            passengerName: passenger,
-            destination: dest,
-            remainingSec: travelSeconds,
-            active: true
-        };
-        
-        let counter = travelSeconds;
-        const interval = setInterval(() => {
-            if (!player.currentTrip || !player.currentTrip.active) {
-                clearInterval(interval);
-                return;
-            }
-            counter--;
-            if (counter <= 0) {
-                clearInterval(interval);
-                finishTripSuccess();
-            } else {
-                const timerMsg = document.querySelector('.timer-message');
-                if (!timerMsg) {
-                    const msg = addMessageDynamic(`⏳ Осталось ${counter} сек. Нажми "обновить время" после прибытия.`, false);
-                    if(msg) msg.classList.add('timer-message');
-                } else {
-                    timerMsg.innerHTML = `<strong>🤖 бот бандит</strong><br>⏳ Осталось ${counter} сек. Нажми "обновить время" для высадки.`;
-                }
-            }
-        }, 1000);
-        
-        const completeDiv = document.createElement('div');
-        completeDiv.className = 'game-panel';
-        completeDiv.id = 'tripCompletePanel';
-        completeDiv.innerHTML = `
-            <div>🚕 везёшь реального игрока (${passenger}) - напиши что-нибудь в чат!</div>
-            <button class="btn btn-success" id="finishTripBtn">✅ обновить время / высадить пассажира</button>
-        `;
-        chatContainer.appendChild(completeDiv);
-        
-        const finishHandler = () => {
-            if (player.currentTrip && player.currentTrip.active) {
-                clearInterval(interval);
-                finishTripSuccess();
-                completeDiv.remove();
-            } else {
-                addMessage("Поездка уже завершена!", true);
-                completeDiv.remove();
-            }
-        };
-        document.getElementById('finishTripBtn')?.addEventListener('click', finishHandler);
-        
-        player.tripTimer = { interval, completeDiv, finishHandler };
-    }
-    
-    function finishTripSuccess() {
-        if (!player.currentTrip) return;
-        const earned = 2500;
-        player.money += earned;
-        addMessage(`✅ Ты успешно высадил пассажира ${player.currentTrip.passengerName}! Заработано: $${earned}. Баланс: $${player.money.toLocaleString()}.`);
-        
-        if (player.taxiTripsDone === 0) {
-            player.taxiTripsDone = 1;
-            addMessage(`🎯 Задание выполнено: 1 поездка таксиста! Теперь тебе доступны другие работы и магазин одежды. +$50.000 на счёт!`);
-            player.money += 50000;
-            player.otherJobsUnlocked = true;
-            player.clothesShopUnlocked = true;
-            addMessage(`💰 Новый баланс: $${player.money.toLocaleString()}`);
-        } else {
-            addMessage(`🚕 Отличная работа! Можешь продолжать возить пассажиров через меню "работа".`);
-        }
-        
-        if (player.tripTimer && player.tripTimer.interval) clearInterval(player.tripTimer.interval);
-        if (player.tripTimer && player.tripTimer.completeDiv) player.tripTimer.completeDiv.remove();
-        player.currentTrip = null;
-        updateMainUI();
-    }
-    
-    function addMessageDynamic(text, isSystem = true) {
-        const msgDiv = document.createElement('div');
-        msgDiv.className = 'message';
-        msgDiv.innerHTML = isSystem ? `<strong>🤖 бот бандит</strong><br>${text}` : text;
-        chatContainer.appendChild(msgDiv);
-        chatContainer.scrollTop = chatContainer.scrollHeight;
-        return msgDiv;
-    }
-    
-    let regStep = 0;
-    let tempSkin = null;
-    let tempHair = null;
-    
-    function startRegistration() {
-        regStep = 1;
-        updateRegUI();
-    }
-    
-    function updateRegUI() {
-        if (!regPanelDiv) return;
-        if (regStep === 1) {
-            regPanelDiv.innerHTML = `
-                <div><strong>🎨 выбирай цвет кожи:</strong></div>
-                <div class="button-group">
-                    <button class="btn" id="skinLight">светлый</button>
-                    <button class="btn" id="skinDark">тёмный</button>
-                    <button class="btn btn-danger" id="noGenderBtn">я не мужик 😂</button>
-                </div>
-            `;
-            document.getElementById('skinLight')?.addEventListener('click', () => { tempSkin = 'светлый'; nextStep(); });
-            document.getElementById('skinDark')?.addEventListener('click', () => { tempSkin = 'тёмный'; nextStep(); });
-            document.getElementById('noGenderBtn')?.addEventListener('click', () => { tempSkin = '😜 унисекс'; nextStep(); });
-        } else if (regStep === 2) {
-            regPanelDiv.innerHTML = `
-                <div><strong>💇 теперь причёска - выбирай:</strong></div>
-                <div class="button-group">
-                    <button class="btn">Классика</button>
-                    <button class="btn">Андеркат</button>
-                    <button class="btn">Дреды</button>
-                    <button class="btn">Лысый</button>
-                    <button class="btn btn-warning" id="noHairBtn">ничего не нравится</button>
-                </div>
-            `;
-            const allHairBtns = regPanelDiv.querySelectorAll('.btn:not(#noHairBtn)');
-            allHairBtns.forEach(btn => {
-                btn.addEventListener('click', () => { tempHair = btn.innerText; nextStep(); });
-            });
-            document.getElementById('noHairBtn')?.addEventListener('click', () => { tempHair = '😎 бунтарская'; nextStep(); });
-        } else if (regStep === 3) {
-            regPanelDiv.innerHTML = `
-                <div><strong>✏️ теперь напиши, как ты хочешь, чтобы я тебя называл:</strong></div>
-                <div style="display:flex; gap:8px; margin-top:12px;">
-                    <input type="text" id="playerNameInput" placeholder="Твой ник..." style="flex:1; background:#1e232f; border:none; padding:10px; border-radius:20px; color:white;">
-                    <button class="btn btn-primary" id="confirmNameBtn">✅ сохранить</button>
-                </div>
-            `;
-            document.getElementById('confirmNameBtn')?.addEventListener('click', () => {
-                const nameInput = document.getElementById('playerNameInput');
-                let chosenName = nameInput.value.trim();
-                if (!chosenName) chosenName = "Fffffffdd";
-                player.name = chosenName;
-                player.skinColor = tempSkin;
-                player.hair = tempHair;
-                player.inGame = true;
-                player.money = 50000;
-                player.taxiTripsDone = 0;
-                player.otherJobsUnlocked = false;
-                player.clothesShopUnlocked = false;
-                addMessage(`✨ отлично, ${player.name}! Ты успешно закончил регистрацию! Твой цвет кожи: ${tempSkin}, причёска: ${tempHair}.`);
-                addMessage(`💰 bot бандит - твоя жизнь. Зарабатывай, покупай тачки и недвижку! 👏 давай покажу где тут что.`);
-                addMessage(`🚀 Погнали! Стартовый капитал: $50.000. Жми на кнопку "задания" или работай таксистом.`);
-                regPanelDiv.style.display = 'none';
-                updateMainUI();
+if __name__ == "__main__":
+    asyncio.run(main())

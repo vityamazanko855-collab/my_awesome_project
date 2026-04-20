@@ -6,7 +6,7 @@ import random
 from datetime import datetime
 
 # ========== КОНФИГ ==========
-BOT_TOKEN = "ВАШ_ТОКЕН_БОТА"  # ЗАМЕНИТЕ НА СВОЙ ТОКЕН!
+BOT_TOKEN = "8655886367:AAGQMnYq2OEGI50vn2Z1TWe1P--zp-zydr0"  # ЗАМЕНИТЕ НА СВОЙ ТОКЕН!
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 # Хранилище данных пользователей

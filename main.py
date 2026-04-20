@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>bot бандит — криминальная игра в Telegram</title>
+    <title>bot бандит - криминальная игра в Telegram</title>
     <style>
         * {
             margin: 0;
@@ -21,7 +21,6 @@
             padding: 20px;
         }
 
-        /* Телефон-подобный контейнер */
         .phone {
             max-width: 420px;
             width: 100%;
@@ -32,7 +31,6 @@
             position: relative;
         }
 
-        /* Шапка как в скриншотах */
         .header {
             background: #1a1d27;
             padding: 18px 20px 12px 20px;
@@ -66,7 +64,6 @@
             color: #8e92a2;
         }
 
-        /* Основная прокрутка */
         .chat-area {
             height: 540px;
             overflow-y: auto;
@@ -78,7 +75,6 @@
             scroll-behavior: smooth;
         }
 
-        /* Стили сообщений */
         .message {
             background: #151a24;
             border-radius: 20px;
@@ -137,11 +133,6 @@
             color: #ffcd85;
         }
 
-        .btn-danger {
-            background: #5a2a2a;
-            color: #ffa098;
-        }
-
         .btn-success {
             background: #2c5a3a;
             color: #c0ffb0;
@@ -152,15 +143,6 @@
             gap: 10px;
             margin-top: 12px;
             flex-wrap: wrap;
-        }
-
-        .badge {
-            background: #1f2533;
-            border-radius: 30px;
-            padding: 6px 14px;
-            font-size: 13px;
-            display: inline-block;
-            margin-bottom: 8px;
         }
 
         .money {
@@ -196,7 +178,6 @@
             cursor: pointer;
         }
 
-        /* полоса прокрутки */
         .chat-area::-webkit-scrollbar {
             width: 4px;
         }
@@ -223,8 +204,7 @@
     </div>
 
     <div class="chat-area" id="chatMessages">
-        <!-- Динамические сообщения будут добавляться сюда -->
-        <div class="message"><strong>бот бандит</strong> — это игра прямо в твоём Telegram-чате.<br>💰 можно зарабатывать деньги, делать бизнес, покупать недвижимость, тачки и шмотки.</div>
+        <div class="message"><strong>бот бандит</strong> - это игра прямо в твоём Telegram-чате.<br>💰 можно зарабатывать деньги, делать бизнес, покупать недвижимость, тачки и шмотки.</div>
         <div class="message">📅 20 апреля<br>🔹 /start 13:02</div>
         <div class="game-panel" id="regPanel">
             <div><strong>✨ регистрация</strong></div>
@@ -242,26 +222,22 @@
 </div>
 
 <script>
-    // ---------- ИГРОВОЕ СОСТОЯНИЕ ----------
     let player = {
         name: null,
         skinColor: null,
         hair: null,
         money: 50000,
-        taxiTripsDone: 0,      // нужно 1 поездку для задания
-        taxiJobUnlocked: true,  // таксист доступен
-        clothesShopUnlocked: false,
+        taxiTripsDone: 0,
         otherJobsUnlocked: false,
-        inGame: false,          // зарегистрирован?
-        currentTrip: null,      // { passengerName, destination, endTime }
-        tripTimer: null,
-        taxiStarted: false
+        clothesShopUnlocked: false,
+        inGame: false,
+        currentTrip: null,
+        tripTimer: null
     };
 
     const chatContainer = document.getElementById('chatMessages');
     const regPanelDiv = document.getElementById('regPanel');
 
-    // Вспомогательная: добавить сообщение в чат (с прокруткой вниз)
     function addMessage(text, isSystem = true, isError = false) {
         const msgDiv = document.createElement('div');
         msgDiv.className = 'message';
@@ -271,17 +247,13 @@
         chatContainer.scrollTop = chatContainer.scrollHeight;
     }
 
-    // Обновить главный интерфейс (панель регистрации/меню)
     function updateMainUI() {
         if (!player.inGame) {
-            // Панель регистрации видна
             if (regPanelDiv) regPanelDiv.style.display = 'block';
             return;
         }
         if (regPanelDiv) regPanelDiv.style.display = 'none';
 
-        // Если игрок в игре, покажем динамическое меню с балансом и заданиями
-        // но чтобы не дублировать, добавим информационную карточку, если её нет
         const existingInfo = document.getElementById('dynamicGameInfo');
         if (existingInfo) existingInfo.remove();
 
@@ -298,22 +270,19 @@
         `;
         chatContainer.appendChild(infoPanel);
 
-        // обработчики кнопок меню
         document.getElementById('showJobsBtn')?.addEventListener('click', () => showWorkMenu());
         document.getElementById('resetGameBtn')?.addEventListener('click', () => resetGame());
         
-        // Если задание выполнено — даём награду
         if (player.taxiTripsDone >= 1 && !player.otherJobsUnlocked) {
             player.otherJobsUnlocked = true;
             player.clothesShopUnlocked = true;
             addMessage(`🎉 Поздравляю! Ты выполнил первое задание! Разблокированы: другие работы, магазин одежды. +$50.000!`);
             player.money += 50000;
             addMessage(`💰 Твой баланс: $${player.money.toLocaleString()}. Теперь можешь зайти в /menu → работа`);
-            updateMainUI(); // обновить отображение баланса
+            updateMainUI();
         }
     }
 
-    // Меню выбора работ
     function showWorkMenu() {
         addMessage(`🚖 Работа: выбери профессию, ${player.name}.`, true);
         const workPanel = document.createElement('div');
@@ -339,9 +308,8 @@
         });
     }
 
-    // Работа таксиста (полный цикл)
     function startTaxiJob() {
-        addMessage(`🚕 Ты находишься в таксопарке города "LAS-VEGAS". Транспорт — Cabbie (скорость 20 км/мин). Поездок до завершения задания: ${player.taxiTripsDone >= 1 ? '0 (задание готово!)' : '1'}`);
+        addMessage(`🚕 Ты находишься в таксопарке города "LAS-VEGAS". Транспорт - Cabbie (скорость 20 км/мин). Поездок до завершения задания: ${player.taxiTripsDone >= 1 ? '0 (задание готово!)' : '1'}`);
         
         const taxiPanel = document.createElement('div');
         taxiPanel.className = 'game-panel';
@@ -362,7 +330,6 @@
         `;
         chatContainer.appendChild(taxiPanel);
         
-        // Обработчики выбора машин
         const carBtns = taxiPanel.querySelectorAll('[data-car]');
         carBtns.forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -384,7 +351,6 @@
         });
     }
 
-    // Пассажир и поездка
     function startPassengerTrip() {
         if (player.currentTrip) {
             addMessage(`⚠️ У тебя уже есть активная поездка! Заверши её.`);
@@ -394,7 +360,7 @@
         const destinations = ["РОДИНА-МАТУШКА", "Аэропорт", "Казино Royale", "Пентхаус", "Полицейский участок", "Пляж Лас-Вегаса"];
         const passenger = randomNames[Math.floor(Math.random() * randomNames.length)];
         const dest = destinations[Math.floor(Math.random() * destinations.length)];
-        const travelSeconds = 5; // 5 секунд для демонстрации, но в духе игры (имитация 1 минуты)
+        const travelSeconds = 5;
         
         addMessage(`🚕 К тебе подсел <strong>${passenger}</strong>. Вы направляетесь в город "${dest}". Прибудете через ${travelSeconds} сек. Общайся с пассажиром через чат!`);
         
@@ -405,7 +371,6 @@
             active: true
         };
         
-        // Таймер обратного отсчёта
         let counter = travelSeconds;
         const interval = setInterval(() => {
             if (!player.currentTrip || !player.currentTrip.active) {
@@ -417,7 +382,6 @@
                 clearInterval(interval);
                 finishTripSuccess();
             } else {
-                // обновим сообщение в реальном времени (можно добавить мелкий апдейт)
                 const timerMsg = document.querySelector('.timer-message');
                 if (!timerMsg) {
                     const msg = addMessageDynamic(`⏳ Осталось ${counter} сек. Нажми "обновить время" после прибытия.`, false);
@@ -428,17 +392,15 @@
             }
         }, 1000);
         
-        // Кнопка обновить время / завершить поездку
         const completeDiv = document.createElement('div');
         completeDiv.className = 'game-panel';
         completeDiv.id = 'tripCompletePanel';
         completeDiv.innerHTML = `
-            <div>🚕 везёшь реального игрока (${passenger}) — напиши что-нибудь в чат!</div>
+            <div>🚕 везёшь реального игрока (${passenger}) - напиши что-нибудь в чат!</div>
             <button class="btn btn-success" id="finishTripBtn">✅ обновить время / высадить пассажира</button>
         `;
         chatContainer.appendChild(completeDiv);
         
-        const finishBtn = document.getElementById('finishTripBtn');
         const finishHandler = () => {
             if (player.currentTrip && player.currentTrip.active) {
                 clearInterval(interval);
@@ -449,9 +411,8 @@
                 completeDiv.remove();
             }
         };
-        finishBtn?.addEventListener('click', finishHandler);
+        document.getElementById('finishTripBtn')?.addEventListener('click', finishHandler);
         
-        // сохраним cleanup
         player.tripTimer = { interval, completeDiv, finishHandler };
     }
     
@@ -472,16 +433,12 @@
             addMessage(`🚕 Отличная работа! Можешь продолжать возить пассажиров через меню "работа".`);
         }
         
-        // убираем активную поездку
         if (player.tripTimer && player.tripTimer.interval) clearInterval(player.tripTimer.interval);
         if (player.tripTimer && player.tripTimer.completeDiv) player.tripTimer.completeDiv.remove();
         player.currentTrip = null;
-        
-        // обновить меню
         updateMainUI();
     }
     
-    // Функция добавления временного сообщения без пересоздания
     function addMessageDynamic(text, isSystem = true) {
         const msgDiv = document.createElement('div');
         msgDiv.className = 'message';
@@ -491,8 +448,7 @@
         return msgDiv;
     }
     
-    // ----- Регистрация с кастомизацией -----
-    let regStep = 0; // 0: start, 1: skin, 2: hair, 3: name
+    let regStep = 0;
     let tempSkin = null;
     let tempHair = null;
     
@@ -517,7 +473,7 @@
             document.getElementById('noGenderBtn')?.addEventListener('click', () => { tempSkin = '😜 унисекс'; nextStep(); });
         } else if (regStep === 2) {
             regPanelDiv.innerHTML = `
-                <div><strong>💇 теперь причёска — выбирай:</strong></div>
+                <div><strong>💇 теперь причёска - выбирай:</strong></div>
                 <div class="button-group">
                     <button class="btn">Классика</button>
                     <button class="btn">Андеркат</button>
@@ -528,4 +484,31 @@
             `;
             const allHairBtns = regPanelDiv.querySelectorAll('.btn:not(#noHairBtn)');
             allHairBtns.forEach(btn => {
-              
+                btn.addEventListener('click', () => { tempHair = btn.innerText; nextStep(); });
+            });
+            document.getElementById('noHairBtn')?.addEventListener('click', () => { tempHair = '😎 бунтарская'; nextStep(); });
+        } else if (regStep === 3) {
+            regPanelDiv.innerHTML = `
+                <div><strong>✏️ теперь напиши, как ты хочешь, чтобы я тебя называл:</strong></div>
+                <div style="display:flex; gap:8px; margin-top:12px;">
+                    <input type="text" id="playerNameInput" placeholder="Твой ник..." style="flex:1; background:#1e232f; border:none; padding:10px; border-radius:20px; color:white;">
+                    <button class="btn btn-primary" id="confirmNameBtn">✅ сохранить</button>
+                </div>
+            `;
+            document.getElementById('confirmNameBtn')?.addEventListener('click', () => {
+                const nameInput = document.getElementById('playerNameInput');
+                let chosenName = nameInput.value.trim();
+                if (!chosenName) chosenName = "Fffffffdd";
+                player.name = chosenName;
+                player.skinColor = tempSkin;
+                player.hair = tempHair;
+                player.inGame = true;
+                player.money = 50000;
+                player.taxiTripsDone = 0;
+                player.otherJobsUnlocked = false;
+                player.clothesShopUnlocked = false;
+                addMessage(`✨ отлично, ${player.name}! Ты успешно закончил регистрацию! Твой цвет кожи: ${tempSkin}, причёска: ${tempHair}.`);
+                addMessage(`💰 bot бандит - твоя жизнь. Зарабатывай, покупай тачки и недвижку! 👏 давай покажу где тут что.`);
+                addMessage(`🚀 Погнали! Стартовый капитал: $50.000. Жми на кнопку "задания" или работай таксистом.`);
+                regPanelDiv.style.display = 'none';
+                updateMainUI();

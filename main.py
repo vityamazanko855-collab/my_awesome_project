@@ -1,301 +1,345 @@
-import asyncio
+import requests
+import json
+import threading
+import time
 import random
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command, StateFilter
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from datetime import datetime
 
 # ========== КОНФИГ ==========
-BOT_TOKEN = "ВАШ_ТОКЕН_БОТА"  # Замените на реальный токен
+BOT_TOKEN = "ВАШ_ТОКЕН_БОТА"  # ЗАМЕНИТЕ НА СВОЙ ТОКЕН!
+API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-bot = Bot(token=BOT_TOKEN)
-storage = MemoryStorage()
-dp = Dispatcher(storage=storage)
+# Хранилище данных пользователей
+user_data = {}
 
-# ========== ХРАНИЛИЩЕ ДАННЫХ ПОЛЬЗОВАТЕЛЕЙ ==========
-user_data = {}  # user_id -> dict
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С TELEGRAM API ==========
+def send_message(chat_id, text, reply_markup=None, parse_mode=None):
+    """Отправка сообщения"""
+    url = f"{API_URL}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": parse_mode
+    }
+    if reply_markup:
+        payload["reply_markup"] = json.dumps(reply_markup)
+    
+    try:
+        requests.post(url, json=payload, timeout=5)
+    except Exception as e:
+        print(f"Ошибка: {e}")
 
-# ========== FSM СОСТОЯНИЯ ==========
-class RegStates(StatesGroup):
-    waiting_skin = State()
-    waiting_hair = State()
-    waiting_name = State()
+def send_callback_answer(callback_id, text=None, show_alert=False):
+    """Ответ на callback запрос"""
+    url = f"{API_URL}/answerCallbackQuery"
+    payload = {"callback_query_id": callback_id}
+    if text:
+        payload["text"] = text
+        payload["show_alert"] = show_alert
+    try:
+        requests.post(url, json=payload, timeout=5)
+    except Exception:
+        pass
 
-class TaxiStates(StatesGroup):
-    waiting_car_choice = State()
-    in_trip = State()
+def edit_message(chat_id, message_id, text, reply_markup=None):
+    """Редактирование сообщения"""
+    url = f"{API_URL}/editMessageText"
+    payload = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "text": text
+    }
+    if reply_markup:
+        payload["reply_markup"] = json.dumps(reply_markup)
+    try:
+        requests.post(url, json=payload, timeout=5)
+    except Exception:
+        pass
+
+def delete_message(chat_id, message_id):
+    """Удаление сообщения"""
+    url = f"{API_URL}/deleteMessage"
+    try:
+        requests.post(url, json={"chat_id": chat_id, "message_id": message_id}, timeout=5)
+    except Exception:
+        pass
 
 # ========== КЛАВИАТУРЫ ==========
-def main_menu_kb():
-    kb = [
-        [KeyboardButton(text="🚕 Работа / задания")],
-        [KeyboardButton(text="👤 Мой профиль")],
-        [KeyboardButton(text="🔄 Сбросить персонажа")]
-    ]
-    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
+def main_menu_keyboard():
+    return {
+        "keyboard": [
+            [{"text": "🚕 Работа / задания"}],
+            [{"text": "👤 Мой профиль"}],
+            [{"text": "🔄 Сбросить персонажа"}]
+        ],
+        "resize_keyboard": True
+    }
 
-def cancel_kb():
-    kb = [[KeyboardButton(text="◀ Отмена")]]
-    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
+def cancel_keyboard():
+    return {
+        "keyboard": [[{"text": "◀ Отмена"}]],
+        "resize_keyboard": True
+    }
 
-# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
-def get_player(user_id):
-    return user_data.get(user_id, {})
+def skin_keyboard():
+    return {
+        "inline_keyboard": [
+            [{"text": "светлый", "callback_data": "skin_light"}],
+            [{"text": "тёмный", "callback_data": "skin_dark"}],
+            [{"text": "я не мужик 😂", "callback_data": "skin_uni"}]
+        ]
+    }
 
-def update_player(user_id, **kwargs):
-    if user_id not in user_data:
-        user_data[user_id] = {}
-    user_data[user_id].update(kwargs)
+def hair_keyboard():
+    return {
+        "inline_keyboard": [
+            [{"text": "Классика", "callback_data": "hair_classic"},
+             {"text": "Андеркат", "callback_data": "hair_under"}],
+            [{"text": "Дреды", "callback_data": "hair_dreads"},
+             {"text": "Лысый", "callback_data": "hair_bald"}],
+            [{"text": "ничего не нравится", "callback_data": "hair_none"}]
+        ]
+    }
 
-def add_money(user_id, amount):
-    if user_id in user_data:
-        user_data[user_id]["money"] = user_data[user_id].get("money", 50000) + amount
+def car_keyboard():
+    return {
+        "inline_keyboard": [
+            [{"text": "TAX2", "callback_data": "car_wrong"},
+             {"text": "TAX5", "callback_data": "car_wrong"},
+             {"text": "TAX3 (твоя)", "callback_data": "car_correct"}],
+            [{"text": "TAX4", "callback_data": "car_wrong"},
+             {"text": "TAX9", "callback_data": "car_wrong"},
+             {"text": "TAX1", "callback_data": "car_wrong"}],
+            [{"text": "◀ Назад", "callback_data": "back_to_work"}]
+        ]
+    }
 
-# ========== ОБРАБОТЧИКИ ==========
-@dp.message(Command("start"))
-async def cmd_start(message: types.Message):
-    user_id = message.from_user.id
+def trip_keyboard():
+    return {
+        "inline_keyboard": [
+            [{"text": "✅ Высадить пассажира", "callback_data": "finish_trip"}]
+        ]
+    }
+
+# ========== ОБРАБОТКА КОМАНД ==========
+def process_start(chat_id, user_id):
     if user_id in user_data and user_data[user_id].get("in_game"):
-        await message.answer(
-            f"👋 С возвращением, {user_data[user_id]['name']}!\n"
-            f"💰 Баланс: ${user_data[user_id]['money']:,}\n"
-            f"📋 Задание: {'✅ выполнено' if user_data[user_id].get('task_done') else 'сделать 1 поездку таксиста'}",
-            reply_markup=main_menu_kb()
-        )
+        p = user_data[user_id]
+        send_message(chat_id, 
+            f"👋 С возвращением, {p['name']}!\n"
+            f"💰 Баланс: ${p['money']:,}\n"
+            f"📋 Задание: {'✅ выполнено' if p.get('task_done') else 'сделать 1 поездку таксиста'}",
+            reply_markup=main_menu_keyboard())
     else:
-        await message.answer(
+        send_message(chat_id,
             "🤖 *bot бандит*\n\n"
             "Это игра прямо в Telegram.\n"
             "💰 Можно зарабатывать деньги, делать бизнес, покупать тачки и недвижку.\n\n"
             "Давай зарегистрируем твоего персонажа!",
-            parse_mode="Markdown"
-        )
-        await message.answer("Выбери цвет кожи:", reply_markup=cancel_kb())
-        await RegStates.waiting_skin.set()
+            parse_mode="Markdown")
+        send_message(chat_id, "Выбери цвет кожи:", reply_markup=skin_keyboard())
 
-@dp.message(RegStates.waiting_skin)
-async def reg_skin(message: types.Message, state: FSMContext):
-    skin = message.text.lower()
-    if skin not in ["светлый", "тёмный", "я не мужик 😂"]:
-        await message.answer("Пожалуйста, выбери один из вариантов: светлый, тёмный или 'я не мужик 😂'")
-        return
-    await state.update_data(skin=skin)
-    await message.answer("Теперь выбери причёску (или нажми 'ничего не нравится'):",
-                         reply_markup=ReplyKeyboardMarkup(
-                             keyboard=[["Классика", "Андеркат"], ["Дреды", "Лысый"], ["ничего не нравится"]],
-                             resize_keyboard=True
-                         ))
-    await RegStates.waiting_hair.set()
-
-@dp.message(RegStates.waiting_hair)
-async def reg_hair(message: types.Message, state: FSMContext):
-    hair = message.text
-    if hair not in ["Классика", "Андеркат", "Дреды", "Лысый", "ничего не нравится"]:
-        await message.answer("Пожалуйста, выбери причёску из предложенных.")
-        return
-    if hair == "ничего не нравится":
-        hair = "😎 бунтарская"
-    await state.update_data(hair=hair)
-    await message.answer("Отлично! Теперь напиши, как я буду тебя называть:",
-                         reply_markup=cancel_kb())
-    await RegStates.waiting_name.set()
-
-@dp.message(RegStates.waiting_name)
-async def reg_name(message: types.Message, state: FSMContext):
-    name = message.text.strip()
-    if not name or len(name) > 30:
-        await message.answer("Имя не может быть пустым или слишком длинным (макс 30 символов).")
-        return
-    data = await state.get_data()
-    user_id = message.from_user.id
-    update_player(user_id,
-                  name=name,
-                  skin=data['skin'],
-                  hair=data['hair'],
-                  money=50000,
-                  task_done=False,
-                  taxi_trips=0,
-                  in_game=True)
-    await state.clear()
-    await message.answer(
-        f"✨ Отлично, {name}! Регистрация завершена.\n"
-        f"🎨 Кожа: {data['skin']}\n💇 Причёска: {data['hair']}\n"
-        f"💰 Стартовый капитал: $50,000\n\n"
-        f"📌 Твоё первое задание: **сделать 1 поездку на такси**\n"
-        f"Используй кнопку '🚕 Работа / задания'",
-        reply_markup=main_menu_kb(),
-        parse_mode="Markdown"
-    )
-
-@dp.message(F.text == "👤 Мой профиль")
-async def profile(message: types.Message):
-    user_id = message.from_user.id
-    p = get_player(user_id)
+def process_profile(chat_id, user_id):
+    p = user_data.get(user_id, {})
     if not p.get("in_game"):
-        await message.answer("Ты ещё не зарегистрирован. Напиши /start")
+        send_message(chat_id, "Ты ещё не зарегистрирован. Напиши /start", reply_markup=main_menu_keyboard())
         return
-    await message.answer(
+    send_message(chat_id,
         f"👤 *{p['name']}*\n"
-        f"🎨 Кожа: {p['skin']}\n💇 Причёска: {p['hair']}\n"
+        f"🎨 Кожа: {p['skin']}\n"
+        f"💇 Причёска: {p['hair']}\n"
         f"💰 Деньги: ${p['money']:,}\n"
         f"🚕 Поездок таксистом: {p.get('taxi_trips', 0)}\n"
         f"📋 Задание: {'✅ выполнено' if p.get('task_done') else 'сделать 1 поездку таксиста'}",
         parse_mode="Markdown",
-        reply_markup=main_menu_kb()
-    )
+        reply_markup=main_menu_keyboard())
 
-@dp.message(F.text == "🚕 Работа / задания")
-async def work_menu(message: types.Message):
-    user_id = message.from_user.id
-    p = get_player(user_id)
-    if not p.get("in_game"):
-        await message.answer("Сначала зарегистрируйся: /start")
-        return
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🚕 Таксист", callback_data="job_taxi")],
-        [InlineKeyboardButton(text="🏭 Бизнесмен (скоро)", callback_data="job_business")],
-        [InlineKeyboardButton(text="◀ Назад", callback_data="back_to_main")]
-    ])
-    await message.answer("Выбери работу:", reply_markup=kb)
+def process_reset(chat_id, user_id):
+    if user_id in user_data:
+        del user_data[user_id]
+    send_message(chat_id, "🔄 Персонаж сброшен. Напиши /start, чтобы создать нового.", reply_markup={"remove_keyboard": True})
 
-@dp.callback_query(F.data == "job_taxi")
-async def taxi_job_start(callback: types.CallbackQuery, state: FSMContext):
-    user_id = callback.from_user.id
-    p = get_player(user_id)
+def process_work_menu(chat_id, user_id):
+    p = user_data.get(user_id, {})
     if not p.get("in_game"):
-        await callback.answer("Зарегистрируйся через /start")
+        send_message(chat_id, "Сначала зарегистрируйся: /start")
         return
-    await callback.message.delete()
-    await callback.message.answer(
-        "🚕 *Таксопарк LAS-VEGAS*\n"
-        "Твой автомобиль: Cabbie (20 км/мин)\n"
+    send_message(chat_id, "🚕 *Работа таксиста*\n\n"
+        f"Твой автомобиль: Cabbie\n"
         f"Поездок до выполнения задания: {0 if p.get('task_done') else 1}\n\n"
         "Выбери машину:",
         parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="TAX2", callback_data="car_wrong"),
-             InlineKeyboardButton(text="TAX5", callback_data="car_wrong"),
-             InlineKeyboardButton(text="TAX3 (твоя)", callback_data="car_correct")],
-            [InlineKeyboardButton(text="TAX4", callback_data="car_wrong"),
-             InlineKeyboardButton(text="TAX9", callback_data="car_wrong"),
-             InlineKeyboardButton(text="TAX1", callback_data="car_wrong")],
-            [InlineKeyboardButton(text="◀ Назад", callback_data="back_to_work")]
-        ])
-    )
-    await TaxiStates.waiting_car_choice.set()
+        reply_markup=car_keyboard())
 
-@dp.callback_query(F.data == "car_wrong", StateFilter(TaxiStates.waiting_car_choice))
-async def wrong_car(callback: types.CallbackQuery, state: FSMContext):
-    await callback.answer("❌ Не та машина!")
-    await callback.message.answer("😵 Ты теребил замок чужого такси, клиент уехал. Попробуй ещё раз.")
-    await callback.message.delete()
-    # повторно показать выбор
-    await taxi_job_start(callback, state)
+# ========== ОБРАБОТКА CALLBACK ==========
+user_trips = {}  # user_id -> {"passenger", "destination", "end_time", "message_id"}
 
-@dp.callback_query(F.data == "car_correct", StateFilter(TaxiStates.waiting_car_choice))
-async def correct_car(callback: types.CallbackQuery, state: FSMContext):
-    await callback.answer("✅ Ты взял ключи от своей ласточки")
-    await callback.message.delete()
-    # запускаем поездку
-    await start_trip(callback.message, state)
+def process_callback(callback):
+    data = callback["data"]
+    chat_id = callback["message"]["chat"]["id"]
+    message_id = callback["message"]["message_id"]
+    user_id = callback["from"]["id"]
+    callback_id = callback["id"]
 
-async def start_trip(message: types.Message, state: FSMContext):
+    # Регистрация - выбор кожи
+    if data == "skin_light":
+        user_data[user_id] = {"skin": "светлый", "reg_step": "hair"}
+        send_callback_answer(callback_id)
+        edit_message(chat_id, message_id, "Теперь выбери причёску:", reply_markup=hair_keyboard())
+    elif data == "skin_dark":
+        user_data[user_id] = {"skin": "тёмный", "reg_step": "hair"}
+        send_callback_answer(callback_id)
+        edit_message(chat_id, message_id, "Теперь выбери причёску:", reply_markup=hair_keyboard())
+    elif data == "skin_uni":
+        user_data[user_id] = {"skin": "😜 унисекс", "reg_step": "hair"}
+        send_callback_answer(callback_id)
+        edit_message(chat_id, message_id, "Теперь выбери причёску:", reply_markup=hair_keyboard())
+    
+    # Выбор причёски
+    elif data in ["hair_classic", "hair_under", "hair_dreads", "hair_bald", "hair_none"]:
+        hair_map = {
+            "hair_classic": "Классика",
+            "hair_under": "Андеркат", 
+            "hair_dreads": "Дреды",
+            "hair_bald": "Лысый",
+            "hair_none": "😎 бунтарская"
+        }
+        user_data[user_id]["hair"] = hair_map[data]
+        user_data[user_id]["reg_step"] = "name"
+        send_callback_answer(callback_id)
+        edit_message(chat_id, message_id, "✏️ Отлично! Теперь напиши, как я буду тебя называть (просто отправь сообщение с именем):", reply_markup=None)
+    
+    # Работа таксиста - выбор машины
+    elif data == "car_correct":
+        send_callback_answer(callback_id, "✅ Ты взял ключи от своей ласточки!")
+        delete_message(chat_id, message_id)
+        start_trip(chat_id, user_id)
+    elif data == "car_wrong":
+        send_callback_answer(callback_id, "❌ Не та машина!", show_alert=True)
+        edit_message(chat_id, message_id, "😵 Ты теребил замок чужого такси, клиент уехал.\nПопробуй ещё раз:", reply_markup=car_keyboard())
+    elif data == "back_to_work":
+        send_callback_answer(callback_id)
+        delete_message(chat_id, message_id)
+        process_work_menu(chat_id, user_id)
+    
+    # Завершение поездки
+    elif data == "finish_trip":
+        trip = user_trips.get(user_id)
+        if not trip:
+            send_callback_answer(callback_id, "Нет активной поездки!")
+            return
+        
+        now = time.time()
+        if now < trip["end_time"]:
+            remaining = int(trip["end_time"] - now)
+            send_callback_answer(callback_id, f"⏳ Ещё {remaining} сек. Подождите!", show_alert=True)
+            return
+        
+        # Завершаем поездку
+        earnings = 2500
+        p = user_data.get(user_id, {})
+        p["money"] = p.get("money", 50000) + earnings
+        p["taxi_trips"] = p.get("taxi_trips", 0) + 1
+        
+        task_completed = False
+        if not p.get("task_done") and p["taxi_trips"] >= 1:
+            p["task_done"] = True
+            p["money"] += 50000
+            task_completed = True
+        
+        send_callback_answer(callback_id, f"✅ Поездка завершена! +${earnings}")
+        
+        msg = f"✅ Вы высадили пассажира *{trip['passenger']}*.\n💰 Заработано: ${earnings:,}\n💵 Баланс: ${p['money']:,}\n🚕 Всего поездок: {p['taxi_trips']}"
+        if task_completed:
+            msg += "\n\n🎉 *Задание выполнено!* +$50,000\nТебе открыты другие работы!"
+        
+        send_message(chat_id, msg, parse_mode="Markdown", reply_markup=main_menu_keyboard())
+        delete_message(chat_id, trip.get("trip_message_id", message_id))
+        del user_trips[user_id]
+
+def start_trip(chat_id, user_id):
     passengers = ["Писюн", "Джек Воробей", "Мистер Кэш", "Леди Удача", "Босс", "Серёга"]
     destinations = ["РОДИНА-МАТУШКА", "Аэропорт", "Казино Royale", "Пентхаус", "Полицейский участок", "Пляж"]
     passenger = random.choice(passengers)
     destination = random.choice(destinations)
-    travel_time = 5  # секунд (в реальном боте можно сделать 60, но для теста 5)
-
-    await state.update_data(passenger=passenger, destination=destination, end_time=asyncio.get_event_loop().time() + travel_time)
-    await message.answer(
+    travel_time = 5  # секунд
+    
+    sent = send_message(chat_id,
         f"🚕 К тебе подсел *{passenger}*.\n"
-        f"Едем в город *{destination}*. Прибудем через {travel_time} сек.\n"
+        f"Едем в город *{destination}*. Прибудем через {travel_time} сек.\n\n"
         "Ты можешь общаться с пассажиром через чат.",
         parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Обновить время / высадить", callback_data="finish_trip")]
-        ])
-    )
-    await TaxiStates.in_trip.set()
+        reply_markup=trip_keyboard())
+    
+    # Тут нужно получить message_id, но для простоты сохраняем в словарь
+    user_trips[user_id] = {
+        "passenger": passenger,
+        "destination": destination,
+        "end_time": time.time() + travel_time,
+        "trip_message_id": None
+    }
 
-@dp.callback_query(F.data == "finish_trip", StateFilter(TaxiStates.in_trip))
-async def finish_trip(callback: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    user_id = callback.from_user.id
-    now = asyncio.get_event_loop().time()
-    if now < data.get('end_time', 0):
-        remaining = int(data['end_time'] - now)
-        await callback.answer(f"⏳ Ещё {remaining} сек. Подождите!")
-        return
-
-    # Поездка завершена
-    earnings = 2500
-    add_money(user_id, earnings)
-    p = get_player(user_id)
-    # Обновляем прогресс задания
-    trips = p.get("taxi_trips", 0) + 1
-    update_player(user_id, taxi_trips=trips, money=p["money"] + earnings)
-
-    task_completed = False
-    if not p.get("task_done") and trips >= 1:
-        update_player(user_id, task_done=True)
-        add_money(user_id, 50000)
-        task_completed = True
-        await callback.message.answer(
-            f"🎉 *Задание выполнено!*\n"
-            f"+$50,000 за задание\n"
-            f"Тебе открыты другие работы и магазин одежды.",
-            parse_mode="Markdown"
-        )
-
-    await callback.message.answer(
-        f"✅ Вы высадили пассажира *{data['passenger']}*.\n"
-        f"💰 Заработано: ${earnings:,}\n"
-        f"💵 Баланс: ${get_player(user_id)['money']:,}\n"
-        f"🚕 Всего поездок: {trips}",
-        parse_mode="Markdown",
-        reply_markup=main_menu_kb()
-    )
-    await state.clear()
-
-@dp.callback_query(F.data == "back_to_work")
-async def back_to_work(callback: types.CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.message.delete()
-    await work_menu(callback.message)
-
-@dp.callback_query(F.data == "back_to_main")
-async def back_to_main(callback: types.CallbackQuery):
-    await callback.message.delete()
-    await callback.message.answer("Главное меню", reply_markup=main_menu_kb())
-
-@dp.message(F.text == "🔄 Сбросить персонажа")
-async def reset_character(message: types.Message):
-    user_id = message.from_user.id
-    if user_id in user_data:
-        del user_data[user_id]
-    await message.answer("Персонаж сброшен. Напиши /start, чтобы создать нового.", reply_markup=types.ReplyKeyboardRemove())
-
-@dp.message(F.text == "◀ Отмена")
-async def cancel_action(message: types.Message, state: FSMContext):
-    await state.clear()
-    await message.answer("Действие отменено.", reply_markup=main_menu_kb())
-
-@dp.message()
-async def chat_with_passenger(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
-    current_state = await state.get_state()
-    if current_state == TaxiStates.in_trip:
-        data = await state.get_data()
-        await message.answer(f"💬 *{data.get('passenger', 'Пассажир')}*: «Ха-ха, отличный разговор! Скоро приедем.»", parse_mode="Markdown")
-    else:
-        await message.answer("Используй кнопки меню.", reply_markup=main_menu_kb())
-
-# ========== ЗАПУСК ==========
-async def main():
-    await dp.start_polling(bot)
+# ========== ОСНОВНОЙ ЦИКЛ ==========
+def process_updates():
+    last_update_id = 0
+    while True:
+        try:
+            url = f"{API_URL}/getUpdates?timeout=30&offset={last_update_id + 1}"
+            response = requests.get(url, timeout=35)
+            updates = response.json()
+            
+            if updates.get("ok") and updates.get("result"):
+                for update in updates["result"]:
+                    last_update_id = update["update_id"]
+                    
+                    # Обработка сообщений
+                    if "message" in update:
+                        msg = update["message"]
+                        chat_id = msg["chat"]["id"]
+                        user_id = msg["from"]["id"]
+                        text = msg.get("text", "")
+                        
+                        if text == "/start":
+                            process_start(chat_id, user_id)
+                        elif text == "👤 Мой профиль":
+                            process_profile(chat_id, user_id)
+                        elif text == "🔄 Сбросить персонажа":
+                            process_reset(chat_id, user_id)
+                        elif text == "🚕 Работа / задания":
+                            process_work_menu(chat_id, user_id)
+                        elif text == "◀ Отмена":
+                            send_message(chat_id, "Действие отменено.", reply_markup=main_menu_keyboard())
+                        elif user_id in user_data and user_data[user_id].get("reg_step") == "name":
+                            # Сохраняем имя при регистрации
+                            user_data[user_id]["name"] = text[:30]
+                            user_data[user_id]["in_game"] = True
+                            user_data[user_id]["money"] = 50000
+                            user_data[user_id]["taxi_trips"] = 0
+                            user_data[user_id]["task_done"] = False
+                            send_message(chat_id,
+                                f"✨ Отлично, {text}! Регистрация завершена!\n"
+                                f"🎨 Кожа: {user_data[user_id]['skin']}\n"
+                                f"💇 Причёска: {user_data[user_id]['hair']}\n"
+                                f"💰 Стартовый капитал: $50,000\n\n"
+                                f"📌 Твоё первое задание: сделать 1 поездку на такси\n"
+                                f"Используй кнопку '🚕 Работа / задания'",
+                                reply_markup=main_menu_keyboard())
+                            del user_data[user_id]["reg_step"]
+                        elif user_id in user_trips:
+                            # Общение с пассажиром
+                            passenger = user_trips[user_id]["passenger"]
+                            send_message(chat_id, f"💬 *{passenger}*: «Ха-ха, отличный разговор! Скоро приедем.»", parse_mode="Markdown")
+                        else:
+                            send_message(chat_id, "Используй кнопки меню.", reply_markup=main_menu_keyboard())
+                    
+                    # Обработка callback запросов
+                    elif "callback_query" in update:
+                        process_callback(update["callback_query"])
+        
+        except Exception as e:
+            print(f"Ошибка: {e}")
+            time.sleep(5)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    print("🤖 Бот запущен!")
+    process_updates()

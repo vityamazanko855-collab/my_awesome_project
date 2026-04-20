@@ -1,21 +1,21 @@
 import random
 import asyncio
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command, StateFilter
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 
 # ========== КОНФИГ ==========
-BOT_TOKEN = "8655886367:AAGQMnYq2OEGI50vn2Z1TWe1P--zp-zydr0"  # ВСТАВЬ СВОЙ ТОКЕН
+BOT_TOKEN = "8655886367:AAGQMnYq2OEGI50vn2Z1TWe1P--zp-zydr0"  # ВСТАВЬ СВОЙ ТОКЕН!!! Бот бандит: bot_1776666968_1536_vitya1488
 
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
 # ========== ДАННЫЕ ПОЛЬЗОВАТЕЛЕЙ ==========
-user_data = {}  # {user_id: {"nick": "Fffffsd", "balance": 50000, "trips_done": 0, "reg_complete": False}}
+user_data = {}
 
 # ========== КЛАВИАТУРЫ ==========
 menu_keyboard = ReplyKeyboardMarkup(
@@ -89,10 +89,8 @@ async def cmd_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     
     if user_id in user_data and user_data[user_id].get("reg_complete", False):
-        # Уже зареган
         await show_main_menu(message, user_id)
     else:
-        # Начинаем регистрацию
         user_data[user_id] = {"reg_complete": False}
         await message.answer(
             "регистрация\n\n"
@@ -168,7 +166,10 @@ async def show_main_menu(message: types.Message, user_id: int):
     
     await message.answer(
         f"здравствуй, {nick}! на счету у тя\n"
-        f"${balance:,}".replace(",", "."),
+        f"${balance:,}".replace(",", ".")
+    )
+    await message.answer(
+        f"предлагаю заработать немного денег!",
         reply_markup=main_menu_keyboard
     )
 
@@ -203,9 +204,11 @@ async def show_work(message: types.Message):
     balance = user.get("balance", 0)
     
     await message.answer(
-        f"вернуться в главное меню\n\n"
-        f"ky, {nick}! на счету у тя ${balance:,}".replace(",", "."),
+        f"вернуться в главное меню",
         reply_markup=ReplyKeyboardRemove()
+    )
+    await message.answer(
+        f"ky, {nick}! на счету у тя ${balance:,}".replace(",", ".")
     )
     await message.answer(
         f"работа\n\n"
@@ -282,7 +285,6 @@ async def taxi_right_car(message: types.Message, state: FSMContext):
         reply_markup=ReplyKeyboardRemove()
     )
     
-    # Рандомный пассажир
     passenger = random.choice(passenger_names)
     await state.update_data(passenger=passenger)
     
@@ -308,7 +310,6 @@ async def finish_trip(message: types.Message, state: FSMContext):
     data = await state.get_data()
     passenger = data.get("passenger", "пассажир")
     
-    # Обновляем данные
     user_data[user_id]["balance"] += 50000
     user_data[user_id]["trips_done"] = 1
     
@@ -328,7 +329,7 @@ async def finish_trip(message: types.Message, state: FSMContext):
 
 # ========== ЗАПУСК ==========
 async def main():
-    print("Бот запущен!")
+    print("🤖 Бот Бандит запущен!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
